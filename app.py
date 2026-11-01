@@ -7,16 +7,24 @@ import pymysql
 from pymysql.cursors import DictCursor
 
 app = Flask(__name__)
-app.secret_key = os.getenv("SECRET_KEY", "change-this-secret-key-for-local-development")
+
+app.secret_key = os.getenv("SECRET_KEY")
+
+if not app.secret_key:
+    raise RuntimeError("SECRET_KEY environment variable is missing")
+
+
 def get_db():
     return pymysql.connect(
-        host="localhost",
-        user="root",
-        password="Antara@123",
-        database="internship_tracker",
-        port=3306,
+        host=os.environ["DB_HOST"],
+        user=os.environ["DB_USER"],
+        password=os.environ["DB_PASSWORD"],
+        database=os.environ["DB_NAME"],
+        port=int(os.getenv("DB_PORT", "3306")),
         cursorclass=DictCursor,
-        autocommit=True
+        autocommit=True,
+        connect_timeout=10,
+        charset="utf8mb4"
     )
 
 def login_required(view):
