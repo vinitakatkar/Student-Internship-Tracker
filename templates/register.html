@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Register | Student Internship Tracker{% endblock %}
+{% block content %}
+<section class="auth-card">
+  <p class="eyebrow">GET ORGANIZED</p><h1>Create student account</h1>
+  <p class="muted">Start tracking your internship applications.</p>
+  <form method="post">
+    <label>Full name<input name="full_name" required maxlength="100" autocomplete="name"></label>
+    <label>Email address<input type="email" name="email" required maxlength="100" autocomplete="email"></label>
+    <label>Password <small>(at least 8 characters)</small><input type="password" name="password" required minlength="8" autocomplete="new-password"></label>
+    <button class="primary full" type="submit">Create account</button>
+  </form>
+  <p class="form-bottom">Already registered? <a href="{{ url_for('login') }}">Login</a></p>
+</section>
+{% endblock %}

@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Login | Student Internship Tracker{% endblock %}
+{% block content %}
+<section class="auth-card">
+  <p class="eyebrow">WELCOME BACK</p><h1>Login to your tracker</h1>
+  <p class="muted">Manage applications, interviews and deadlines in one place.</p>
+  <form method="post">
+    <label>Email address<input type="email" name="email" required autocomplete="email"></label>
+    <label>Password<input type="password" name="password" required autocomplete="current-password"></label>
+    <button class="primary full" type="submit">Login</button>
+  </form>
+  <p class="form-bottom">New here? <a href="{{ url_for('register') }}">Create an account</a></p>
+</section>
+{% endblock %}

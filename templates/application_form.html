@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% set editing = item is not none %}
+{% block title %}{{ 'Edit' if editing else 'Add' }} application | Student Internship Tracker{% endblock %}
+{% block content %}
+<section class="form-panel">
+  <p class="eyebrow">APPLICATION DETAILS</p>
+  <h1>{{ 'Edit application' if editing else 'Add an application' }}</h1>
+  <p class="muted">Keep the company, role, current stage and important date up to date.</p>
+  <form method="post" class="application-form">
+    <div class="form-grid">
+      <label>Company name *<input name="company_name" required maxlength="100" value="{{ item.company_name if editing else '' }}"></label>
+      <label>Role title *<input name="role_title" required maxlength="100" placeholder="e.g. Data Analyst Intern" value="{{ item.role_title if editing else '' }}"></label>
+      <label>Job posting URL<input type="url" name="job_url" placeholder="https://..." value="{{ item.job_url or '' if editing else '' }}"></label>
+      <label>Location<input name="location" maxlength="100" placeholder="e.g. Pune / Remote" value="{{ item.location or '' if editing else '' }}"></label>
+      <label>Application date *<input type="date" name="application_date" required value="{{ item.application_date if editing else '' }}"></label>
+      <label>Status<select name="status">
+        {% for status in ['Applied','Assessment','Interview','Offer','Rejected'] %}
+          <option value="{{ status }}" {% if editing and item.status == status %}selected{% elif not editing and status == 'Applied' %}selected{% endif %}>{{ status }}</option>
+        {% endfor %}
+      </select></label>
+      <label class="wide">Assessment / interview deadline<input type="date" name="deadline_date" value="{{ item.deadline_date or '' if editing else '' }}"></label>
+    </div>
+    <div class="form-actions"><a class="secondary button-link" href="{{ url_for('dashboard') }}">Cancel</a><button class="primary" type="submit">{{ 'Save changes' if editing else 'Save application' }}</button></div>
+  </form>
+</section>
+{% endblock %}

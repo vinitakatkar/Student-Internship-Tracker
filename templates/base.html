@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Student Internship Tracker{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="{{ url_for('dashboard') if session.get('user_id') else url_for('login') }}">Student Internship Tracker</a>
+  <nav>
+    {% if session.get('user_id') %}
+      <span class="welcome">Hi, {{ session.get('full_name', 'Student') }}</span>
+      <a href="{{ url_for('dashboard') }}">Dashboard</a>
+      <a class="nav-button" href="{{ url_for('add_application') }}">+ Add application</a>
+      <a href="{{ url_for('logout') }}">Logout</a>
+    {% else %}
+      <a href="{{ url_for('login') }}">Login</a>
+      <a href="{{ url_for('register') }}">Register</a>
+    {% endif %}
+  </nav>
+</header>
+<main class="container">
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      {% for category, message in messages %}
+        <div class="alert {{ category }}">{{ message }}</div>
+      {% endfor %}
+    {% endif %}
+  {% endwith %}
+  {% block content %}{% endblock %}
+</main>
+<footer>Student Internship Tracker · Keep your career journey organized</footer>
+</body>
+</html>
