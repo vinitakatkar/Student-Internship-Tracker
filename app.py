@@ -1,46 +1,82 @@
 import os
+import sqlite3
 from datetime import date
 from functools import wraps
-from flask import Flask, render_template, request, redirect, url_for, session, flash
+from flask import (
+    Flask,
+    render_template,
+    request,
+    redirect,
+    url_for,
+    session,
+    flash,
+)
 from werkzeug.security import generate_password_hash, check_password_hash
-import pymysql
-from pymysql.cursors import DictCursor
 
 app = Flask(__name__)
-
-app.secret_key = os.getenv("SECRET_KEY")
-
-if not app.secret_key:
-    raise RuntimeError("SECRET_KEY environment variable is missing")
+app.secret_key = os.getenv("SECRET_KEY", "student-tracker-secret-key-2026")
+DB_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tracker.db")
 
 
 def get_db():
-    return pymysql.connect(
-        host=os.environ["DB_HOST"],
-        user=os.environ["DB_USER"],
-        password=os.environ["DB_PASSWORD"],
-        database=os.environ["DB_NAME"],
-        port=int(os.getenv("DB_PORT", "3306")),
-        cursorclass=DictCursor,
-        autocommit=True,
-        connect_timeout=10,
-        charset="utf8mb4"
-    )
+    conn = sqlite3.connect(DB_FILE)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def init_db():
+    conn = get_db()
+    cursor = conn.cursor()
+    # Users table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            user_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            full_name TEXT NOT NULL,
+            email TEXT NOT NULL UNIQUE,
+            password_hash TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
+    # Applications table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS applications (
+            app_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            company_name TEXT NOT NULL,
+            role_title TEXT NOT NULL,
+            job_url TEXT,
+            location TEXT,
+            application_date DATE,
+            status TEXT NOT NULL DEFAULT 'Applied',
+            deadline_date DATE,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+        );
+    """)
+    conn.commit()
+    conn.close()
+
+
+# Initialize database tables on startup
+init_db()
+
 
 def login_required(view):
     @wraps(view)
-    def wrapped(*args, **kwargs):
+    def wrapped_view(**kwargs):
         if "user_id" not in session:
             flash("Please log in first.", "warning")
             return redirect(url_for("login"))
-        return view(*args, **kwargs)
-    return wrapped
+        return view(**kwargs)
+    return wrapped_view
+
 
 @app.route("/")
-def home():
+def index():
     if "user_id" in session:
         return redirect(url_for("dashboard"))
     return redirect(url_for("login"))
+
 
 @app.route("/register", methods=["GET", "POST"])
 def register():
@@ -48,148 +84,172 @@ def register():
         full_name = request.form.get("full_name", "").strip()
         email = request.form.get("email", "").strip().lower()
         password = request.form.get("password", "")
-        if not full_name or not email or len(password) < 8:
-            flash("Enter your name, email, and a password with at least 8 characters.", "danger")
+
+        if not full_name or not email or not password:
+            flash("All fields are required.", "danger")
             return render_template("register.html")
+
+        if len(password) < 6:
+            flash("Password must be at least 6 characters long.", "danger")
+            return render_template("register.html")
+
+        hashed_pw = generate_password_hash(password)
+
         conn = get_db()
+        cursor = conn.cursor()
         try:
-            with conn.cursor() as cur:
-                cur.execute("SELECT user_id FROM users WHERE email=%s", (email,))
-                if cur.fetchone():
-                    flash("Email already registered. Please log in.", "warning")
-                    return render_template("register.html")
-                cur.execute(
-                    "INSERT INTO users (full_name, email, password_hash) VALUES (%s, %s, %s)",
-                    (full_name, email, generate_password_hash(password))
-                )
-            flash("Account created. You can now log in.", "success")
+            cursor.execute(
+                "INSERT INTO users (full_name, email, password_hash) VALUES (?, ?, ?)",
+                (full_name, email, hashed_pw),
+            )
+            conn.commit()
+            flash("Account created successfully! Please log in.", "success")
             return redirect(url_for("login"))
+        except sqlite3.IntegrityError:
+            flash("An account with that email already exists.", "danger")
         finally:
             conn.close()
+
     return render_template("register.html")
+
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
         email = request.form.get("email", "").strip().lower()
         password = request.form.get("password", "")
+
         conn = get_db()
-        try:
-            with conn.cursor() as cur:
-                cur.execute("SELECT user_id, full_name, password_hash FROM users WHERE email=%s", (email,))
-                user = cur.fetchone()
-            if user and check_password_hash(user["password_hash"], password):
-                session.clear()
-                session["user_id"] = user["user_id"]
-                session["full_name"] = user["full_name"]
-                return redirect(url_for("dashboard"))
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM users WHERE email = ?", (email,))
+        user = cursor.fetchone()
+        conn.close()
+
+        if user and check_password_hash(user["password_hash"], password):
+            session.clear()
+            session["user_id"] = user["user_id"]
+            session["full_name"] = user["full_name"]
+            session["email"] = user["email"]
+            flash(f"Welcome back, {user['full_name']}!", "success")
+            return redirect(url_for("dashboard"))
+        else:
             flash("Invalid email or password.", "danger")
-        finally:
-            conn.close()
+
     return render_template("login.html")
+
 
 @app.route("/logout")
 def logout():
     session.clear()
-    flash("You have been logged out.", "success")
+    flash("You have been logged out.", "info")
     return redirect(url_for("login"))
+
 
 @app.route("/dashboard")
 @login_required
 def dashboard():
+    user_id = session["user_id"]
     conn = get_db()
-    try:
-        with conn.cursor() as cur:
-            cur.execute("SELECT COUNT(*) AS total FROM applications WHERE user_id=%s", (session["user_id"],))
-            total = cur.fetchone()["total"]
-            cur.execute("SELECT status, COUNT(*) AS count FROM applications WHERE user_id=%s GROUP BY status", (session["user_id"],))
-            grouped = {row["status"]: row["count"] for row in cur.fetchall()}
-            cur.execute("""SELECT * FROM applications WHERE user_id=%s
-                           ORDER BY (deadline_date IS NULL), deadline_date ASC, created_at DESC""",
-                        (session["user_id"],))
-            applications = cur.fetchall()
-            cur.execute("""SELECT * FROM applications WHERE user_id=%s AND deadline_date IS NOT NULL
-                           AND deadline_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 2 DAY)
-                           ORDER BY deadline_date ASC""", (session["user_id"],))
-            urgent = cur.fetchall()
-        return render_template("dashboard.html", applications=applications, total=total,
-                               applied=grouped.get("Applied", 0), assessment=grouped.get("Assessment", 0),
-                               interview=grouped.get("Interview", 0), offers=grouped.get("Offer", 0),
-                               rejected=grouped.get("Rejected", 0), urgent=urgent)
-    finally:
-        conn.close()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        "SELECT * FROM applications WHERE user_id = ? ORDER BY created_at DESC",
+        (user_id,),
+    )
+    applications = cursor.fetchall()
+
+    # Calculate status counts
+    counts = {"Applied": 0, "OA": 0, "Interview": 0, "Offer": 0, "Rejected": 0}
+    for app_item in applications:
+        status = app_item["status"]
+        if status in counts:
+            counts[status] += 1
+
+    conn.close()
+    return render_template(
+        "dashboard.html",
+        applications=applications,
+        counts=counts,
+        total_count=len(applications),
+        today=date.today().isoformat(),
+    )
+
 
 @app.route("/applications/add", methods=["GET", "POST"])
 @login_required
 def add_application():
     if request.method == "POST":
-        company = request.form.get("company_name", "").strip()
-        role = request.form.get("role_title", "").strip()
-        job_url = request.form.get("job_url", "").strip() or None
-        location = request.form.get("location", "").strip() or None
-        applied_on = request.form.get("application_date") or date.today().isoformat()
+        company_name = request.form.get("company_name", "").strip()
+        role_title = request.form.get("role_title", "").strip()
+        job_url = request.form.get("job_url", "").strip()
+        location = request.form.get("location", "").strip()
+        application_date = request.form.get("application_date") or date.today().isoformat()
         status = request.form.get("status", "Applied")
-        deadline = request.form.get("deadline_date") or None
-        allowed = {"Applied", "Assessment", "Interview", "Offer", "Rejected"}
-        if not company or not role or status not in allowed:
-            flash("Company, role, and a valid status are required.", "danger")
-            return render_template("application_form.html", item=None)
-        conn = get_db()
-        try:
-            with conn.cursor() as cur:
-                cur.execute("""INSERT INTO applications
-                    (user_id, company_name, role_title, job_url, location, application_date, status, deadline_date)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
-                    (session["user_id"], company, role, job_url, location, applied_on, status, deadline))
-            flash("Application added successfully.", "success")
-            return redirect(url_for("dashboard"))
-        finally:
-            conn.close()
-    return render_template("application_form.html", item=None)
+        deadline_date = request.form.get("deadline_date") or None
 
-@app.route("/applications/<int:app_id>/edit", methods=["GET", "POST"])
-@login_required
-def edit_application(app_id):
-    conn = get_db()
-    try:
-        with conn.cursor() as cur:
-            cur.execute("SELECT * FROM applications WHERE app_id=%s AND user_id=%s", (app_id, session["user_id"]))
-            item = cur.fetchone()
-            if not item:
-                flash("Application not found.", "danger")
-                return redirect(url_for("dashboard"))
-            if request.method == "POST":
-                company = request.form.get("company_name", "").strip()
-                role = request.form.get("role_title", "").strip()
-                status = request.form.get("status", "Applied")
-                allowed = {"Applied", "Assessment", "Interview", "Offer", "Rejected"}
-                if not company or not role or status not in allowed:
-                    flash("Enter a company, role, and valid status.", "danger")
-                    return render_template("application_form.html", item=item)
-                cur.execute("""UPDATE applications SET company_name=%s, role_title=%s, job_url=%s,
-                    location=%s, application_date=%s, status=%s, deadline_date=%s
-                    WHERE app_id=%s AND user_id=%s""",
-                    (company, role, request.form.get("job_url", "").strip() or None,
-                     request.form.get("location", "").strip() or None,
-                     request.form.get("application_date") or date.today().isoformat(), status,
-                     request.form.get("deadline_date") or None, app_id, session["user_id"]))
-                flash("Application updated.", "success")
-                return redirect(url_for("dashboard"))
-        return render_template("application_form.html", item=item)
-    finally:
+        if not company_name or not role_title:
+            flash("Company name and Role title are required.", "danger")
+            return render_template("add_application.html")
+
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO applications 
+            (user_id, company_name, role_title, job_url, location, application_date, status, deadline_date)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                session["user_id"],
+                company_name,
+                role_title,
+                job_url,
+                location,
+                application_date,
+                status,
+                deadline_date,
+            ),
+        )
+        conn.commit()
         conn.close()
 
-@app.route("/applications/<int:app_id>/delete", methods=["POST"])
+        flash("Application logged successfully!", "success")
+        return redirect(url_for("dashboard"))
+
+    return render_template("add_application.html")
+
+
+@app.route("/applications/update-status/<int:app_id>", methods=["POST"])
+@login_required
+def update_status(app_id):
+    new_status = request.form.get("status")
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute(
+        "UPDATE applications SET status = ? WHERE app_id = ? AND user_id = ?",
+        (new_status, app_id, session["user_id"]),
+    )
+    conn.commit()
+    conn.close()
+    flash("Status updated.", "info")
+    return redirect(url_for("dashboard"))
+
+
+@app.route("/applications/delete/<int:app_id>", methods=["POST"])
 @login_required
 def delete_application(app_id):
     conn = get_db()
-    try:
-        with conn.cursor() as cur:
-            cur.execute("DELETE FROM applications WHERE app_id=%s AND user_id=%s", (app_id, session["user_id"]))
-        flash("Application deleted.", "success")
-    finally:
-        conn.close()
+    cursor = conn.cursor()
+    cursor.execute(
+        "DELETE FROM applications WHERE app_id = ? AND user_id = ?",
+        (app_id, session["user_id"]),
+    )
+    conn.commit()
+    conn.close()
+    flash("Application removed.", "info")
     return redirect(url_for("dashboard"))
 
+
 if __name__ == "__main__":
-    app.run(debug=True)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port, debug=False)
